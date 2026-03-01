@@ -1,0 +1,135 @@
+{
+  "info": {
+    "name": "TACO Smoke Test Collection",
+    "description": "Functional API test collection for TACO LLM Token Analytics & Cost Optimizer.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8000/health",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["health"]
+        }
+      }
+    },
+    {
+      "name": "Chat - Simple Request",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messages\": [{\"role\": \"user\", \"content\": \"Hello, what is the weather today?\"}],\n  \"model\": \"gpt-4o-mini\",\n  \"user_id\": \"testuser\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8000/v1/chat",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["v1", "chat"]
+        }
+      }
+    },
+    {
+      "name": "Chat - Complex Request",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messages\": [{\"role\": \"user\", \"content\": \"Summarize the attached document and provide key insights.\"}],\n  \"model\": \"gpt-4o\",\n  \"user_id\": \"testuser\",\n  \"org_id\": \"testorg\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8000/v1/chat",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["v1", "chat"]
+        }
+      }
+    },
+    {
+      "name": "Analytics Overview",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8000/analytics/overview?user_id=testuser",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["analytics", "overview"],
+          "query": [{"key": "user_id", "value": "testuser"}]
+        }
+      }
+    },
+    {
+      "name": "Analytics Timeseries",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8000/analytics/timeseries?user_id=testuser&days=7",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["analytics", "timeseries"],
+          "query": [
+            {"key": "user_id", "value": "testuser"},
+            {"key": "days", "value": "7"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "Analytics Requests (Paginated)",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "http://localhost:8000/analytics/requests?user_id=testuser&page=1&limit=10",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["analytics", "requests"],
+          "query": [
+            {"key": "user_id", "value": "testuser"},
+            {"key": "page", "value": "1"},
+            {"key": "limit", "value": "10"}
+          ]
+        }
+      }
+    },
+    {
+      "name": "Chat - Budget Block (402)",
+      "request": {
+        "method": "POST",
+        "header": [
+          {"key": "Content-Type", "value": "application/json"}
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"messages\": [{\"role\": \"user\", \"content\": \"Trigger budget block test\"}],\n  \"model\": \"gpt-4o-mini\",\n  \"user_id\": \"budgetblock\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:8000/v1/chat",
+          "protocol": "http",
+          "host": ["localhost"],
+          "port": "8000",
+          "path": ["v1", "chat"]
+        }
+      }
+    }
+  ]
+}

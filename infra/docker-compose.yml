@@ -1,0 +1,72 @@
+version: "3.9"
+
+networks:
+  taco-network:
+    driver: bridge
+
+volumes:
+  pgdata:
+
+services:
+  # ── PostgreSQL ──────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15
+    container_name: taco-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: tacodev
+      POSTGRES_USER: taco
+      POSTGRES_PASSWORD: tacopassword
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - taco-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U taco -d tacodev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # ── FastAPI Backend ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: taco-backend
+    restart: unless-stopped
+    env_file:
+      - ../backend/.env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://taco:tacopassword@postgres:5432/tacodev
+      DEFAULT_CHEAP_MODEL: gpt-4o-mini
+      DEFAULT_SMART_MODEL: gpt-4o
+      SLICE_WINDOW: 20
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - taco-network
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── React Frontend (nginx) ──────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: Dockerfile
+    container_name: taco-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - taco-network

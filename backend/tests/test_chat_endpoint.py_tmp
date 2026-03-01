@@ -1,0 +1,276 @@
+"""
+tests/test_chat_endpoint.py — Integration tests for POST /v1/chat.
+
+Uses httpx TestClient against the full FastAPI app.
+All provider calls mocked via pytest monkeypatch / patch.
+7 tests as specified in the execution plan.
+"""
+import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
+from decimal import Decimal
+
+from httpx import AsyncClient, ASGITransport
+
+
+def make_router_result(model="gpt-4o-mini", provider="openai", tier="cheap"):
+    from app.services.router import RouterResult
+    return RouterResult(model=model, provider=provider, tier=tier, auto_detected=False)
+
+
+def make_provider_response(content="Hello!", prompt=10, completion=5):
+    from app.services.provider import ProviderResponse
+    return ProviderResponse(
+        content=content,
+        prompt_tokens=prompt,
+        completion_tokens=completion,
+        total_tokens=prompt + completion,
+        latency_ms=150,
+        status_code=200,
+    )
+
+
+SIMPLE_BODY = {
+    "user_id": "test-user",
+    "task_type": "simple",
+    "messages": [{"role": "user", "content": "Say hello"}],
+}
+
+COMPLEX_BODY = {
+    "user_id": "test-user",
+    "task_type": "complex",
+    "messages": [{"role": "user", "content": "Explain async/await in Python with code examples and architecture."}],
+}
+
+
+# ── Fixtures ─────────────────────────────────────────────────────────────────
+def cheap_model_pricing():
+    from app.models.model_pricing import ModelPricing
+    m = ModelPricing()
+    m.model = "gpt-4o-mini"
+    m.provider = "openai"
+    m.tier = "cheap"
+    m.input_cost_per_1k = Decimal("0.00015")
+    m.output_cost_per_1k = Decimal("0.00060")
+    m.context_window = 128000
+    m.is_active = True
+    return m
+
+
+def smart_model_pricing():
+    from app.models.model_pricing import ModelPricing
+    m = ModelPricing()
+    m.model = "gpt-4o"
+    m.provider = "openai"
+    m.tier = "smart"
+    m.input_cost_per_1k = Decimal("0.00250")
+    m.output_cost_per_1k = Decimal("0.01000")
+    m.context_window = 128000
+    m.is_active = True
+    return m
+
+
+def make_db_mock_for_chat(pricing_row=None, budget_row=None, spent=0.0):
+    """Build a mock async DB session for chat endpoint tests."""
+    mock_db = AsyncMock()
+
+    async def fake_execute(stmt, *args, **kwargs):
+        result = MagicMock()
+        # Budget query returns None (no budget)
+        result.scalar_one_or_none.return_value = budget_row
+        # Router query
+        scalars = MagicMock()
+        scalars.first.return_value = pricing_row
+        result.scalars.return_value = scalars
+        # Spent sum
+        result.scalar.return_value = Decimal(str(spent))
+        return result
+
+    mock_db.execute = fake_execute
+    mock_db.commit = AsyncMock()
+    mock_db.rollback = AsyncMock()
+    mock_db.close = AsyncMock()
+    return mock_db
+
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+@pytest.mark.asyncio
+async def test_valid_simple_request_returns_200():
+    """Test 1: Valid request, simple task → 200 with content + usage."""
+    from app.main import app
+
+    with patch("app.routers.chat.route_request", new=AsyncMock(return_value=make_router_result())) as _, \
+         patch("app.routers.chat.call_provider", new=AsyncMock(return_value=make_provider_response())) as _, \
+         patch("app.routers.chat.check_budget", new=AsyncMock()) as _, \
+         patch("app.db.get_db") as mock_get_db, \
+         patch("app.routers.chat.AsyncSessionLocal", new_callable=lambda: type("M", (), {"__call__": lambda self, *a, **kw: AsyncMock()})):
+        mock_get_db.return_value = make_db_mock_for_chat(cheap_model_pricing()).__aiter__()
+
+        async def override_db():
+            yield make_db_mock_for_chat(cheap_model_pricing())
+
+        app.dependency_overrides[__import__("app.db", fromlist=["get_db"]).get_db] = override_db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post("/v1/chat", json=SIMPLE_BODY)
+
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "content" in data
+    assert "usage" in data
+    assert data["metadata"]["routed_to_tier"] == "cheap"
+
+
+@pytest.mark.asyncio
+async def test_complex_task_uses_smart_tier():
+    """Test 2: Valid complex request → model_used is smart tier."""
+    from app.main import app
+
+    with patch("app.routers.chat.route_request",
+               new=AsyncMock(return_value=make_router_result("gpt-4o", "openai", "smart"))) as _, \
+         patch("app.routers.chat.call_provider", new=AsyncMock(return_value=make_provider_response())) as _, \
+         patch("app.routers.chat.check_budget", new=AsyncMock()) as _, \
+         patch("app.routers.chat.AsyncSessionLocal", new_callable=lambda: type("M", (), {"__call__": lambda self, *a, **kw: AsyncMock()})):
+
+        async def override_db():
+            yield make_db_mock_for_chat(smart_model_pricing())
+
+        from app.db import get_db
+        app.dependency_overrides[get_db] = override_db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post("/v1/chat", json=COMPLEX_BODY)
+
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    assert resp.json()["metadata"]["routed_to_tier"] == "smart"
+    assert resp.json()["model_used"] == "gpt-4o"
+
+
+@pytest.mark.asyncio
+async def test_auto_short_message_uses_cheap_model():
+    """Test 3: task_type='auto', short message → cheap model used."""
+    from app.main import app
+    from app.db import get_db
+
+    with patch("app.routers.chat.route_request",
+               new=AsyncMock(return_value=make_router_result("gpt-4o-mini", "openai", "cheap"))) as _, \
+         patch("app.routers.chat.call_provider", new=AsyncMock(return_value=make_provider_response())) as _, \
+         patch("app.routers.chat.check_budget", new=AsyncMock()) as _, \
+         patch("app.routers.chat.AsyncSessionLocal", new_callable=lambda: type("M", (), {"__call__": lambda self, *a, **kw: AsyncMock()})):
+
+        async def override_db():
+            yield make_db_mock_for_chat(cheap_model_pricing())
+
+        app.dependency_overrides[get_db] = override_db
+
+        body = {**SIMPLE_BODY, "task_type": "auto", "messages": [{"role": "user", "content": "Summarize: hi"}]}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post("/v1/chat", json=body)
+
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    assert resp.json()["metadata"]["routed_to_tier"] == "cheap"
+
+
+@pytest.mark.asyncio
+async def test_budget_limit_zero_returns_402():
+    """Test 4: Budget limit set to $0.00 → returns 402."""
+    from app.main import app
+    from app.db import get_db
+    from app.exceptions import BudgetExceededException
+
+    with patch("app.routers.chat.check_budget",
+               new=AsyncMock(side_effect=BudgetExceededException(0.05, 0.00, "test-user"))) as _, \
+         patch("app.routers.chat.AsyncSessionLocal", new_callable=lambda: type("M", (), {"__call__": lambda self, *a, **kw: AsyncMock()})):
+
+        async def override_db():
+            yield make_db_mock_for_chat(cheap_model_pricing())
+
+        app.dependency_overrides[get_db] = override_db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post("/v1/chat", json=SIMPLE_BODY)
+
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 402
+    assert resp.json()["error"] == "budget_exceeded"
+
+
+@pytest.mark.asyncio
+async def test_missing_user_id_returns_422():
+    """Test 5: Missing user_id → returns 422."""
+    from app.main import app
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        resp = await ac.post("/v1/chat", json={
+            "task_type": "simple",
+            "messages": [{"role": "user", "content": "hello"}],
+        })
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_provider_error_returns_502():
+    """Test 6: Provider mock returns error → returns 502."""
+    from app.main import app
+    from app.db import get_db
+    from app.exceptions import ProviderErrorException
+
+    with patch("app.routers.chat.route_request",
+               new=AsyncMock(return_value=make_router_result())) as _, \
+         patch("app.routers.chat.call_provider",
+               new=AsyncMock(side_effect=ProviderErrorException("openai", 500, "Internal error"))) as _, \
+         patch("app.routers.chat.check_budget", new=AsyncMock()) as _, \
+         patch("app.routers.chat.AsyncSessionLocal", new_callable=lambda: type("M", (), {"__call__": lambda self, *a, **kw: AsyncMock()})):
+
+        async def override_db():
+            yield make_db_mock_for_chat(cheap_model_pricing())
+
+        app.dependency_overrides[get_db] = override_db
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post("/v1/chat", json=SIMPLE_BODY)
+
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 502
+    assert resp.json()["error"] == "provider_error"
+
+
+@pytest.mark.asyncio
+async def test_20_messages_with_window_10_returns_was_sliced():
+    """Test 7: 20-message history with window=10 → was_sliced=True in response."""
+    from app.main import app
+    from app.db import get_db
+
+    messages_20 = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"msg {i}"}
+        for i in range(20)
+    ]
+
+    with patch("app.routers.chat.route_request",
+               new=AsyncMock(return_value=make_router_result())) as _, \
+         patch("app.routers.chat.call_provider", new=AsyncMock(return_value=make_provider_response())) as _, \
+         patch("app.routers.chat.check_budget", new=AsyncMock()) as _, \
+         patch("app.routers.chat.AsyncSessionLocal", new_callable=lambda: type("M", (), {"__call__": lambda self, *a, **kw: AsyncMock()})):
+
+        async def override_db():
+            yield make_db_mock_for_chat(cheap_model_pricing())
+
+        app.dependency_overrides[get_db] = override_db
+
+        body = {**SIMPLE_BODY, "messages": messages_20}
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post("/v1/chat", json=body)
+
+        app.dependency_overrides.clear()
+
+    assert resp.status_code == 200
+    assert resp.json()["metadata"]["was_sliced"] is True
+    assert resp.json()["metadata"]["messages_trimmed"] > 0
