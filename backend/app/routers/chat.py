@@ -81,6 +81,7 @@ async def chat(
         user_id=body.user_id,
         org_id=body.org_id,
         estimated_cost_usd=rough_cost,
+        estimated_tokens=token_estimate.estimated_tokens,
     )
 
     # ── STEP 3: Context Slicer ──────────────────────────────────────────────

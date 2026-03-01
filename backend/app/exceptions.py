@@ -6,10 +6,11 @@ app/exceptions.py — Custom exceptions for TACO pipeline.
 class BudgetExceededException(Exception):
     """Raised when a user/org spend exceeds their configured budget limit."""
 
-    def __init__(self, spent_usd: float, limit_usd: float, entity_id: str):
+    def __init__(self, spent_usd: float, limit_usd: float, entity_id: str, prompt_tokens: int = 0):
         self.spent_usd = spent_usd
         self.limit_usd = limit_usd
         self.entity_id = entity_id
+        self.prompt_tokens = prompt_tokens
         super().__init__(
             f"Budget exceeded for {entity_id}: spent ${spent_usd:.6f}, limit ${limit_usd:.4f}"
         )

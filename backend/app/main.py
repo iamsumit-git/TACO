@@ -54,6 +54,7 @@ async def budget_exceeded_handler(request: Request, exc: BudgetExceededException
             "spent_usd": exc.spent_usd,
             "limit_usd": exc.limit_usd,
             "entity_id": exc.entity_id,
+            "prompt_tokens": exc.prompt_tokens,
         },
     )
 

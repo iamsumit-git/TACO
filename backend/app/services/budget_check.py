@@ -38,6 +38,7 @@ async def check_budget(
     user_id: str,
     org_id: Optional[str],
     estimated_cost_usd: float,
+    estimated_tokens: int = 0,
 ) -> None:
     """
     Check whether sending this request would exceed any budget limits.
@@ -84,4 +85,5 @@ async def check_budget(
                 spent_usd=spent_usd,
                 limit_usd=float(budget.limit_usd),
                 entity_id=entity_id,
+                prompt_tokens=estimated_tokens,
             )
