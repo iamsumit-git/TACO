@@ -125,3 +125,15 @@ taco/
 | GET | /analytics/overview | Spend summary |
 | GET | /analytics/timeseries | Daily cost trend |
 | GET | /analytics/requests | Paginated request log |
+
+
+## 🔐 Data & Privacy
+
+TACO is designed to be self-hosted. This means:
+
+- **Your API keys** are stored in your own `.env` file on your own server. They are never transmitted to any external service other than the LLM provider you configured.
+- **Your prompts and completions** are not stored by default. TACO only logs metadata: model used, token counts, cost, latency, and your `user_id` tag.
+- **Your database** runs in a Docker container on your own infrastructure. No data is sent to TACO's servers — because there are no TACO servers.
+- **You can delete everything** by running `docker compose down -v`. Clean slate.
+
+If you enable prompt logging for debugging, that data lives exclusively in your Postgres instance. You control retention, access, and deletion entirely.
