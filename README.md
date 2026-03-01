@@ -50,6 +50,70 @@ TACO is a full-stack platform for optimizing, monitoring, and controlling costs 
 | Frontend | React + Vite · TypeScript · Recharts · TailwindCSS |
 | Infra | Docker Compose |
 
+### Architecure
+
+```mermaid
+flowchart TD
+    %% ── Entry Point ──────────────────────────────────────────────────────
+    APP["🧑‍💻 Your App\n(any language / framework)"]
+
+    %% ── TACO Middleware ──────────────────────────────────────────────────
+    subgraph TACO["🌮  TACO Middleware  (Express · /v1/chat)"]
+        direction TB
+
+        EST["1️⃣  Token Estimator\ntiktoken / Anthropic counter\n→ estimate input cost\n→ block if over budget"]
+
+        SLICE["2️⃣  Context Slicer\nSliding window — last N messages\n→ keeps input tokens flat"]
+
+        ROUTER["3️⃣  Smart Router\nSimple prompt → cheap model\nComplex prompt → smart model"]
+
+        LOG["4️⃣  Cost Logger\nrecord: user_id · model · tokens · $cost\n→ INSERT into SQLite / Postgres"]
+
+        EST --> SLICE --> ROUTER
+        ROUTER -->|"after response"| LOG
+    end
+
+    %% ── LLM Providers ────────────────────────────────────────────────────
+    subgraph PROVIDERS["🤖  LLM Providers"]
+        direction LR
+        CHEAP["Cheap Tier\nGPT-4o-mini\nDeepSeek-V3\nClaude Haiku"]
+        SMART["Smart Tier\nGPT-4o\nClaude Sonnet\nGemini Pro"]
+    end
+
+    %% ── Storage ──────────────────────────────────────────────────────────
+    DB[("🗄️  Database\nSQLite (dev)\nPostgres (prod)\n\nrequest_logs\n(id · user_id · model\n tokens · cost · ts)")]
+
+    %% ── Dashboard ────────────────────────────────────────────────────────
+    DASH["📊  Analytics Dashboard\nSpend by user / feature\nModel usage breakdown\nDaily cost trend"]
+
+    %% ── Flows ────────────────────────────────────────────────────────────
+    APP -->|"POST /v1/chat\n{ user_id, messages, task_type }"| EST
+
+    ROUTER -->|"Simple task"| CHEAP
+    ROUTER -->|"Complex task"| SMART
+
+    CHEAP -->|"response + usage"| LOG
+    SMART -->|"response + usage"| LOG
+
+    LOG -->|"INSERT"| DB
+    DB  -->|"SELECT aggregates"| DASH
+    DASH -->|"view"| APP
+
+    %% ── Styles ───────────────────────────────────────────────────────────
+    classDef app      fill:#e0e7ff,stroke:#6366f1,color:#1e1b4b,font-weight:bold
+    classDef taco     fill:#fef9c3,stroke:#d97706,color:#1c1917
+    classDef provider fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef db       fill:#fee2e2,stroke:#dc2626,color:#450a0a
+    classDef dash     fill:#e0f2fe,stroke:#0284c7,color:#0c4a6e,font-weight:bold
+
+    class APP app
+    class EST,SLICE,ROUTER,LOG taco
+    class CHEAP,SMART provider
+    class DB db
+    class DASH dash
+
+```
+
 ## Quick Start (Development)
 
 ### 1. Start the database
